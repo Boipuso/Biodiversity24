@@ -1,0 +1,433 @@
+// implemented temporal stdv of indices?! or prob better: max values, start of season
+// linear model glm --> to select most promising bands?! 
+// stepaic 
+//sam model may be in gee!!
+// just transfer the classification to the regions without training data 
+//validate the transfer 
+
+/*
+classic rf classification may be to undercomplex because the classes are so similar, instead temporal or spatial variability of 
+(stdv. or even better start of season, maximum values of ..) indices or bands 
+- maybe even only from a selected class, which we mask and then do the spatial or temporal analysis
+- maybe collect 50 polygons to validate but not hundreds, too much! 
+- perhaps include Sentinel 1 
+- pay attention to the vegetation period - also composite not from the beginning to the end of the year, but 
+perhaps from the middle of 2019 - 2020 
+*/
+
+// Load your uploaded asset as an EE object
+//var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
+var Union_Chooma = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma");
+var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
+var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
+
+var Dissolve_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Dissolve_Chooma_Nyawa");
+var sample_sichifulo_23 = ee.FeatureCollection("users/Henning/Biodiversity/Sichifulo-sample-data-POL-2023");
+var sample_sichifulo_20 = ee.FeatureCollection("users/Henning/Biodiversity/Sichifulo-sample-data-POL-2020");
+
+// Print the asset to the console to inspect its properties
+//print('Union_Chooma_Nyawa:', Union_Chooma_Nyawa);
+print('Union_Chooma:', Union_Chooma);
+//print('Dissolve_Chooma_Nyawa:', Dissolve_Chooma_Nyawa);
+print('sample_sichifulo_23:', sample_sichifulo_23);
+print('sample_sichifulo_20:', sample_sichifulo_20);
+
+// Add the asset to the map with visualization parameters
+//Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa');
+Map.addLayer(Union_Chooma, {color: 'red'}, 'Union_Chooma');
+Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa');
+Map.addLayer(dissolved, {color: 'green'}, 'dissolved');
+//Map.addLayer(Dissolve_Chooma_Nyawa, {color: 'green'}, 'Dissolve_Chooma_Nyawa');
+Map.addLayer(sample_sichifulo_23, {color: 'yellow'}, 'sample_sichifulo_23');
+Map.addLayer(sample_sichifulo_20, {color: 'orange'}, 'sample_sichifulo_20');
+
+// Center the map on the asset
+Map.centerObject(Union_Chooma, 10);
+
+
+////////////////////////////////////////////////////////
+////////////cloud masking/////////////////////////////7
+////////////////////////////////////////////////////////
+// Function to remove cloud and snow pixels
+function maskS2clouds(image) {
+  var cloudProb = image.select('MSK_CLDPRB');
+  var snowProb = image.select('MSK_SNWPRB');
+  var cloud = cloudProb.lt(5);
+  var snow = snowProb.lt(5);
+  var scl = image.select('SCL'); 
+  var shadow = scl.eq(3); // 3 = cloud shadow
+  var cirrus = scl.eq(10); // 10 = cirrus
+  // Cloud probability less than 5% or cloud shadow classification
+  var mask = (cloud.and(snow)).and(cirrus.neq(1)).and(shadow.neq(1));
+ return image.updateMask(mask);
+}
+
+/////////////////////////////////////////////////7
+//////////Indices calculation////////////////////
+//////////////////////////////////////////////////
+
+// Indices: 
+// NDVI = (NIR-RED) / (NIR+RED)
+// NDWI = (GREEN-NIR) / (GREEN+NIR)
+// NDII = (NIR – SWIR1) / (NIR + SWIR1)
+// MSI = SWIR1 / NIR
+// Radar backscatter coefficiant (HH/VV)
+// Spectral reflectance (SWIR1, SWIR2, NIR)
+// EVI 
+
+// Needed bands: blue, green, red, nir, swir1, swir2, 
+
+function calcNDVI(img){
+  return img.addBands(img.normalizedDifference(['NIR','R']).rename('NDVI').float());
+}
+ 
+ function calcNDWI(img){
+  return img.addBands(img.normalizedDifference(['G','NIR']).rename('NDWI').float());
+}
+
+ function calcNDII(img){
+  return img.addBands(img.normalizedDifference(['NIR','SWIR1']).rename('NDII').float());
+}
+
+ function calcMSI(img){
+  var MSI = img.expression(
+    "SWIR1 / NIR", 
+    {
+    SWIR1: img.select('SWIR1'),
+    NIR: img.select('NIR'),
+    });
+    return img
+    .addBands(MSI.rename('MSI')).float();
+}
+
+ function calcEVI(img){
+  var EVI = img.expression(
+  '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', 
+  {
+    NIR: img.select('NIR'),
+    RED: img.select('R'),
+    BLUE: img.select('B'),
+    });
+    return img
+    .addBands(EVI.rename('EVI')).float();
+}
+
+////////////////////////////////
+/// apply scaling factor and rename bands ///////
+////////////////////////////////
+
+// Scaling data is needed to bring the data into the right format
+// to actually represent the values
+function applyScaleFactors(image) {
+  // Select only the optical bands and divide by 10000
+  var opticalBands = image.select(['B2', 'B3', 'B4', 'B8', 'B11', 'B12']).divide(10000);
+  // Add the scaled optical bands back to the image
+  image = image.addBands(opticalBands, null, true);
+  return image;
+}
+
+// Define functions to select and rename bands for S2
+function renameBands(image) {
+    var bands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12'];
+    var new_bands = ['B', 'G', 'R', 'NIR', 'SWIR1', 'SWIR2'];
+    return image.select(bands).rename(new_bands);
+}
+
+//////////////////////////////////
+// load and filter the S2 data ///
+//////////////////////////////////
+var s2_col_20 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(Union_Chooma)
+            .map(function(image){return image.clip(Union_Chooma)})
+            .filter(ee.Filter.calendarRange(1,12,'month'))
+            .filter(ee.Filter.calendarRange(2020,2020,'year'))
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+            .map(maskS2clouds)
+            .map(applyScaleFactors)
+            .map(renameBands)
+            .map(calcNDVI)
+            .map(calcNDWI)
+            .map(calcNDII)
+            .map(calcMSI)
+            .map(calcEVI);
+print('S2 collection 20:', s2_col_20);
+print('available S2 images 20:', s2_col_20.size());
+
+
+// calculate the median composite
+  var startDate = ee.Date.fromYMD(2020, 1, 1);
+  var s2median20 = s2_col_20.median()
+                .set('year', 2020)    
+                .set('system:time_start', startDate.millis());
+                
+// Visualization parameters
+var visParams = {
+  bands: ['R', 'G', 'B'],
+  min: 0,
+  max: 0.3, 
+  gamma: 1.4
+};
+
+Map.addLayer(s2median20, visParams, 's2median20')
+print(s2median20, 's2median20')
+
+
+///// for 2023 /////////
+
+var s2_col_23 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+            .filterBounds(Union_Chooma)
+            .map(function(image){return image.clip(Union_Chooma)})
+            .filter(ee.Filter.calendarRange(1,12,'month'))
+            .filter(ee.Filter.calendarRange(2023,2023,'year'))
+            .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
+            .map(maskS2clouds)
+            .map(applyScaleFactors)
+            .map(renameBands)
+            .map(calcNDVI)
+            .map(calcNDWI)
+            .map(calcNDII)
+            .map(calcMSI)
+            .map(calcEVI);
+print('S2 collection 2023:', s2_col_23);
+print('available S2 images 2023:', s2_col_23.size());
+
+
+// calculate the median composite
+  var startDate23 = ee.Date.fromYMD(2023, 1, 1);
+  var s2median23 = s2_col_23.median()
+                .set('year', 2023)    
+                .set('system:time_start', startDate.millis());
+
+Map.addLayer(s2median23, visParams, 's2median23');
+print(s2median23.bandNames());
+
+///////////////////////////////////////
+//////////RF classification ///////////
+///////////////////////////////////////
+
+// Overlay the point on the multi-temporal stack to include the band information in the feature collection.
+var sample = s2median23.sampleRegions({
+  collection: sample_sichifulo_23, 
+  properties: ['LC_Nr'], 
+  scale: 90,
+  geometries : true // coordinates maintained
+});
+
+// Create a column in the feature collection that assignes each feature a random value between 0-1 and define a seed number for reproducibility
+var sample = sample.randomColumn("random",5);
+
+// Every feature with a value of less than 0.66 (2/3) is collected as a training feature,
+// The rest is collected as validation features (1/3)
+var split = 0.66;
+var training = sample.filter(ee.Filter.lt("random",split));
+var validation = sample.filter(ee.Filter.gte("random",split));
+
+print('training features:', training);
+print('samples:', sample);
+
+
+
+//////////////////////////////////////
+//classification function/////////////
+//////////////////////////////////////#
+
+
+ var RFclassification = function(bands, name) {
+  // Train the classifier using the training features
+  var classifier = ee.Classifier.smileRandomForest(50).train({
+    features: training,  
+    classProperty: 'LC_Nr', 
+    inputProperties: bands
+  });
+
+  // Classify the multi-temporal stack
+  var classification = s2median23.select(bands).classify(classifier);
+
+  // Apply majority filter to filter out single pixels that have no adjacent pixels of the same class
+  // those pixels are usually falsely classified
+  var classificationFiltered = classification.focal_mode(1, "square");
+
+  // Clip the classification to the ROI (it won't be clipped otherwise, even though the input is clipped)
+  classificationFiltered = classificationFiltered.clip(dissolved);
+  
+  // Classify validation points
+  var validated = validation.classify(classifier);
+  
+  // Compare reference and predicted classes
+  var testAccuracy = validated.errorMatrix('LC_Nr', 'classification');
+
+  // Return the classified scenes, their corresponding accuracies and the respective names
+  return {classification: classificationFiltered, testAccuracy: testAccuracy, name: name, classifier: classifier};
+};
+
+////////////////// Define the different sets of bands to iterate over and name the sets //////////////////////
+var bandSets = [
+  {bands: ['B', 'G', 'R', 'NIR', 'SWIR1', 'SWIR2', 'NDVI', 'NDWI', 'NDII', 'MSI', 'EVI'], 
+    name: 'all'},
+  {bands: ['B', 'G', 'NIR', 'SWIR1', 'SWIR2', 'NDWI'], 
+    name: 'selected'},
+];
+
+/////////////// Iterate over the band sets to apply the RF classification //////////////////
+// also include accuracy assessment and exportation to Google Drive
+
+for (var i = 0; i < bandSets.length; i++) {
+  var set = bandSets[i];
+  
+  // Train, classify, and compute accuracy using the current set of bands
+  var result = RFclassification(set.bands, set.name);
+
+  // Add the classified layer to the map
+  Map.addLayer(result.classification, {}, 'Classification ' + result.name);
+  
+  // Print error matrix and overall accuracy of the classification for the respective set of bands
+  print('Validation error matrix for ' + result.name + ': ', result.testAccuracy);
+  print('Validation overall accuracy for ' + result.name + ': ', result.testAccuracy.accuracy());
+}
+  
+///////////////////////////////////////////////////////////////
+///////////// Adding a legend to the classified image /////////
+///////////////////////////////////////////////////////////////
+
+// The code is copied and only slightly adjusted (change of classes and their colors) from the "classification lecture" slides
+
+var legend = ui.Panel({ 
+  style: { 
+    position: 'bottom-left', 
+    padding: '18px 25px'}}
+    );
+
+// Create legend title
+var legendTitle = ui.Label({ 
+  value: 'LCLU classification - Kaza region', 
+  style: { 
+    fontWeight: 'bold', 
+    fontSize: '22px', 
+    margin: '0 0 15px 0', 
+    padding: ' 0 '}}
+    );
+
+// Add the title to the panel
+legend.add(legendTitle);
+// Creates and styles 1 row of the legend.
+var makeRow = function(color, name) { 
+  // Create the label that is actually the colored box. 
+  var colorBox = ui.Label({ 
+    style: { 
+      backgroundColor: color, 
+      // Use padding to give the box height and width. 
+      padding: '10px', 
+      margin: '0 0 5px 0'}
+      }); 
+    // Create the label filled with the description text. 
+    var description = ui.Label({ 
+      value: name, 
+      style: {margin: '0 0 4px 16px',}
+    });
+    // return the panel 
+    return ui.Panel({ 
+      widgets: [colorBox, description], 
+      layout: ui.Panel.Layout.Flow('horizontal')
+    });
+};
+// Palette with the colors
+var palette =['#1565C0', '#009608', '#8bc34a', '#ffc107', '#ff9800', '#f44336', '#ad1457'  ];
+// Name of the legend
+var names = ['Water', 'Bare', 'Built', 'Cropland', 'Grass', 'Shrub', 'Forest'];
+// Add color and and names
+for (var i = 0; i < 7; i++) { 
+  legend.add(makeRow(palette[i], names[i]));
+}
+// Add legend to map (alternatively you can also print the legend to the console)
+Map.add(legend);
+var legend = ui.Panel({ 
+  style: { 
+    position: 'bottom-left', 
+    padding: '18px 25px'}
+});
+
+
+////////////////////////////////////////
+//// feature importance scores /////////
+////////////////////////////////////////
+
+/////////////// Iterate over the band sets to apply the RF classification //////////////////
+// also include accuracy assessment and exportation to Google Drive
+
+for (var i = 0; i < bandSets.length; i++) {
+  var set = bandSets[i];
+  
+  // Train, classify, and compute accuracy using the current set of bands
+  var result = RFclassification(set.bands, set.name);
+
+  // Add the classified layer to the map
+  Map.addLayer(result.classification, {}, 'Classification ' + result.name);
+  
+  // Print error matrix and overall accuracy of the classification for the respective set of bands
+  print('Validation error matrix for ' + result.name + ': ', result.testAccuracy);
+  print('Validation overall accuracy for ' + result.name + ': ', result.testAccuracy.accuracy());
+}
+
+
+for (var i = 0; i < bandSets.length; i++) {
+  var set = bandSets[i];
+  
+  // Train, classify, and compute accuracy using the current set of bands
+  var result = RFclassification(set.bands, set.name);
+  
+  print(result.classifier.explain(), 'Explain classifier' + result.name)
+
+var importance = ee.Dictionary(result.classifier.explain().get('importance'))
+
+var sum = importance.values().reduce(ee.Reducer.sum())
+
+var relativeImportance = importance.map(function(key, val) {
+   return (ee.Number(val).multiply(100)).divide(sum)
+  })
+print(relativeImportance, 'Relative Importance'+ result.name)
+
+var importanceFc = ee.FeatureCollection([
+  ee.Feature(null, relativeImportance)
+])
+
+var featureimportance = ui.Chart.feature.byProperty({
+  features: importanceFc
+}).setOptions({
+      title: 'RF Variable Importance - Method 2'+ result.name,
+      vAxis: {title: 'Importance'},
+      hAxis: {title: 'Bands'}
+  })
+print(featureimportance, 'Relative Importance'+ result.name)
+}
+
+
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////
+// Agricultural mapping 
+
+var s2_20_agri = s2_col_20.select('NDVI');
+
+var maxNDVI = s2_20_agri.select('NDVI').max();
+var minNDVI = s2_20_agri.select('NDVI').min();
+var stdvNDVI = s2_20_agri.select('NDVI').reduce(ee.Reducer.stdDev());
+
+// Function to calculate the largest NDVI drop
+var ndviDifference = s2_20_agri.select('NDVI').map(function(image) {
+  var diff = image.subtract(image).rename('NDVI_Drop');
+  return diff;
+}).max();
+
+var parameters = maxNDVI.addBands(minNDVI)
+                        .addBands(stdvNDVI)
+                        .addBands(ndviDifference);
+
+print(parameters);
+
+
+
+var classifier = ee.Classifier.smileRandomForest(50).train(trainingData, 'class', parameters.bandNames());
+
+// Classify the image
+var classified = parameters.classify(classifier);
+
+Map.addLayer(classified, {}, 'Classified Image');
