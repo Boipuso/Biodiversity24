@@ -21,9 +21,9 @@ var Union_Chooma = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_za
 var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
 var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
 
-var Dissolve_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Dissolve_Chooma_Nyawa");
-var sample_sichifulo_23 = ee.FeatureCollection("users/Henning/Biodiversity/Sichifulo-sample-data-POL-2023");
-var sample_sichifulo_20 = ee.FeatureCollection("users/Henning/Biodiversity/Sichifulo-sample-data-POL-2020");
+var dissolved = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Dissolve_Chooma_Nyawa");
+var sample_sichifulo_23 = ee.FeatureCollection("users/Henning/Biodiversity/sample23corrected");
+var sample_sichifulo_20 = ee.FeatureCollection("users/Henning/Biodiversity/sample20corrected");
 
 // Print the asset to the console to inspect its properties
 //print('Union_Chooma_Nyawa:', Union_Chooma_Nyawa);
@@ -34,8 +34,8 @@ print('sample_sichifulo_20:', sample_sichifulo_20);
 
 // Add the asset to the map with visualization parameters
 //Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa');
-Map.addLayer(Union_Chooma, {color: 'red'}, 'Union_Chooma');
-Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa');
+Map.addLayer(Union_Chooma, {color: 'red'}, 'Union_Chooma', 0, 1);
+Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa', 0, 1);
 Map.addLayer(dissolved, {color: 'green'}, 'dissolved');
 //Map.addLayer(Dissolve_Chooma_Nyawa, {color: 'green'}, 'Dissolve_Chooma_Nyawa');
 Map.addLayer(sample_sichifulo_23, {color: 'yellow'}, 'sample_sichifulo_23');
@@ -43,6 +43,10 @@ Map.addLayer(sample_sichifulo_20, {color: 'orange'}, 'sample_sichifulo_20');
 
 // Center the map on the asset
 Map.centerObject(Union_Chooma, 10);
+
+
+
+
 
 
 ////////////////////////////////////////////////////////
@@ -168,7 +172,7 @@ var visParams = {
   gamma: 1.4
 };
 
-Map.addLayer(s2median20, visParams, 's2median20')
+Map.addLayer(s2median20, visParams, 's2median20', 0, 1)
 print(s2median20, 's2median20')
 
 
@@ -198,15 +202,39 @@ print('available S2 images 2023:', s2_col_23.size());
                 .set('year', 2023)    
                 .set('system:time_start', startDate.millis());
 
-Map.addLayer(s2median23, visParams, 's2median23');
+Map.addLayer(s2median23, visParams, 's2median23', 0, 1);
 print(s2median23.bandNames());
 
 ///////////////////////////////////////
-//////////RF classification ///////////
+//////////Overlay training points and split into traind and val///////////
 ///////////////////////////////////////
 
+//// for 2020
+
 // Overlay the point on the multi-temporal stack to include the band information in the feature collection.
-var sample = s2median23.sampleRegions({
+var sample20 = s2median20.sampleRegions({
+  collection: sample_sichifulo_20, 
+  properties: ['LC_Nr'], 
+  scale: 90,
+  geometries: true // coordinates maintained
+});
+
+// Create a column in the feature collection that assignes each feature a random value between 0-1 and define a seed number for reproducibility
+var sample20 = sample20.randomColumn("random",123);
+
+// Every feature with a value of less than 0.66 (2/3) is collected as a training feature,
+// The rest is collected as validation features (1/3)
+var split = 0.66;
+var training20 = sample20.filter(ee.Filter.lt("random",split));
+var validation20 = sample20.filter(ee.Filter.gte("random",split));
+
+//print('training features 2020:', training20);
+//print('samples 2020:', sample20);
+
+////// and for 2023 ///////
+
+// Overlay the point on the multi-temporal stack to include the band information in the feature collection.
+var sample23 = s2median23.sampleRegions({
   collection: sample_sichifulo_23, 
   properties: ['LC_Nr'], 
   scale: 90,
@@ -214,44 +242,43 @@ var sample = s2median23.sampleRegions({
 });
 
 // Create a column in the feature collection that assignes each feature a random value between 0-1 and define a seed number for reproducibility
-var sample = sample.randomColumn("random",5);
+var sample23 = sample23.randomColumn("random",123);
 
 // Every feature with a value of less than 0.66 (2/3) is collected as a training feature,
 // The rest is collected as validation features (1/3)
 var split = 0.66;
-var training = sample.filter(ee.Filter.lt("random",split));
-var validation = sample.filter(ee.Filter.gte("random",split));
+var training23 = sample23.filter(ee.Filter.lt("random",split));
+var validation23 = sample23.filter(ee.Filter.gte("random",split));
 
-print('training features:', training);
-print('samples:', sample);
+//print('training features 2023:', training23);
+//print('samples 2023:', sample23);
 
 
 
 //////////////////////////////////////
 //classification function/////////////
 //////////////////////////////////////#
+ var RFclassification = function(train, img, area, val, name) {
 
-
- var RFclassification = function(bands, name) {
   // Train the classifier using the training features
   var classifier = ee.Classifier.smileRandomForest(50).train({
-    features: training,  
+    features: train,  
     classProperty: 'LC_Nr', 
-    inputProperties: bands
+    inputProperties: img.bandNames()
   });
 
   // Classify the multi-temporal stack
-  var classification = s2median23.select(bands).classify(classifier);
+  var classification = img.classify(classifier);
 
   // Apply majority filter to filter out single pixels that have no adjacent pixels of the same class
   // those pixels are usually falsely classified
   var classificationFiltered = classification.focal_mode(1, "square");
 
   // Clip the classification to the ROI (it won't be clipped otherwise, even though the input is clipped)
-  classificationFiltered = classificationFiltered.clip(dissolved);
+  classificationFiltered = classificationFiltered.clip(area);
   
   // Classify validation points
-  var validated = validation.classify(classifier);
+  var validated = val.classify(classifier);
   
   // Compare reference and predicted classes
   var testAccuracy = validated.errorMatrix('LC_Nr', 'classification');
@@ -260,25 +287,41 @@ print('samples:', sample);
   return {classification: classificationFiltered, testAccuracy: testAccuracy, name: name, classifier: classifier};
 };
 
-////////////////// Define the different sets of bands to iterate over and name the sets //////////////////////
-var bandSets = [
-  {bands: ['B', 'G', 'R', 'NIR', 'SWIR1', 'SWIR2', 'NDVI', 'NDWI', 'NDII', 'MSI', 'EVI'], 
-    name: 'all'},
-  {bands: ['B', 'G', 'NIR', 'SWIR1', 'SWIR2', 'NDWI'], 
-    name: 'selected'},
+////////////////// Define the different sets of inputs to iterate over and name the sets //////////////////////
+var imgset = [
+  {train: training20,
+    img: s2median20, 
+    area: dissolved,
+    val: validation20,
+    name: '2020'},
+  {train: training23,
+    img: s2median23, 
+    area: dissolved,
+    val: validation23,
+    name: '2023'},
 ];
 
-/////////////// Iterate over the band sets to apply the RF classification //////////////////
-// also include accuracy assessment and exportation to Google Drive
+/////////////// Iterate over the image sets to apply the RF classification //////////////////
+// also include accuracy assessment
 
-for (var i = 0; i < bandSets.length; i++) {
-  var set = bandSets[i];
+for (var i = 0; i < imgset.length; i++) {
+  var set = imgset[i];
   
   // Train, classify, and compute accuracy using the current set of bands
-  var result = RFclassification(set.bands, set.name);
+  var result = RFclassification(set.train, set.img, set.area, set.val, set.name);
+  
+  // Palette with the colors
+  var palette =['#1565C0', '#009608', '#8bc34a', '#ffc107', '#ff9800', '#f44336', '#ad1457', "#A4DBE8"];
+  
+  // Define visualization parameters
+var visParams = {
+  min: 0,
+  max: 7,  // Assuming you have 7 classes (0 to 6)
+  palette: palette
+};
 
   // Add the classified layer to the map
-  Map.addLayer(result.classification, {}, 'Classification ' + result.name);
+  Map.addLayer(result.classification, visParams, 'Classification ' + result.name, 0, 1);
   
   // Print error matrix and overall accuracy of the classification for the respective set of bands
   print('Validation error matrix for ' + result.name + ': ', result.testAccuracy);
@@ -331,11 +374,11 @@ var makeRow = function(color, name) {
     });
 };
 // Palette with the colors
-var palette =['#1565C0', '#009608', '#8bc34a', '#ffc107', '#ff9800', '#f44336', '#ad1457'  ];
+var palette =['#1565C0', '#009608', '#8bc34a', '#ffc107', '#ff9800', '#f44336', '#ad1457', "#A4DBE8"];
 // Name of the legend
-var names = ['Water', 'Bare', 'Built', 'Cropland', 'Grass', 'Shrub', 'Forest'];
+var names = ['Water', 'Bare', 'Built', 'Cropland', 'Grass', 'Shrub', 'Forest', 'Wetland'];
 // Add color and and names
-for (var i = 0; i < 7; i++) { 
+for (var i = 0; i < 8; i++) { 
   legend.add(makeRow(palette[i], names[i]));
 }
 // Add legend to map (alternatively you can also print the legend to the console)
@@ -347,63 +390,12 @@ var legend = ui.Panel({
 });
 
 
-////////////////////////////////////////
-//// feature importance scores /////////
-////////////////////////////////////////
-
-/////////////// Iterate over the band sets to apply the RF classification //////////////////
-// also include accuracy assessment and exportation to Google Drive
-
-for (var i = 0; i < bandSets.length; i++) {
-  var set = bandSets[i];
-  
-  // Train, classify, and compute accuracy using the current set of bands
-  var result = RFclassification(set.bands, set.name);
-
-  // Add the classified layer to the map
-  Map.addLayer(result.classification, {}, 'Classification ' + result.name);
-  
-  // Print error matrix and overall accuracy of the classification for the respective set of bands
-  print('Validation error matrix for ' + result.name + ': ', result.testAccuracy);
-  print('Validation overall accuracy for ' + result.name + ': ', result.testAccuracy.accuracy());
-}
 
 
-for (var i = 0; i < bandSets.length; i++) {
-  var set = bandSets[i];
-  
-  // Train, classify, and compute accuracy using the current set of bands
-  var result = RFclassification(set.bands, set.name);
-  
-  print(result.classifier.explain(), 'Explain classifier' + result.name)
-
-var importance = ee.Dictionary(result.classifier.explain().get('importance'))
-
-var sum = importance.values().reduce(ee.Reducer.sum())
-
-var relativeImportance = importance.map(function(key, val) {
-   return (ee.Number(val).multiply(100)).divide(sum)
-  })
-print(relativeImportance, 'Relative Importance'+ result.name)
-
-var importanceFc = ee.FeatureCollection([
-  ee.Feature(null, relativeImportance)
-])
-
-var featureimportance = ui.Chart.feature.byProperty({
-  features: importanceFc
-}).setOptions({
-      title: 'RF Variable Importance - Method 2'+ result.name,
-      vAxis: {title: 'Importance'},
-      hAxis: {title: 'Bands'}
-  })
-print(featureimportance, 'Relative Importance'+ result.name)
-}
-
-
+/*
 ////////////////////////////////////////////////////////////
+/////////////Agricultural mapping /////////////////////////
 ////////////////////////////////////////////////////////////
-// Agricultural mapping 
 
 var s2_20_agri = s2_col_20.select('NDVI');
 
@@ -431,3 +423,5 @@ var classifier = ee.Classifier.smileRandomForest(50).train(trainingData, 'class'
 var classified = parameters.classify(classifier);
 
 Map.addLayer(classified, {}, 'Classified Image');
+
+*/
