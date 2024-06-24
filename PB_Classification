@@ -19,8 +19,6 @@ perhaps from the middle of 2019 - 2020
 //var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
 var Union_Chooma = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma");
 var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
-var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
-
 var dissolved = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Dissolve_Chooma_Nyawa");
 var sample_sichifulo_23 = ee.FeatureCollection("users/Henning/Biodiversity/sample23corrected");
 var sample_sichifulo_20 = ee.FeatureCollection("users/Henning/Biodiversity/sample20corrected");
@@ -141,8 +139,8 @@ function renameBands(image) {
 // load and filter the S2 data ///
 //////////////////////////////////
 var s2_col_20 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-            .filterBounds(Union_Chooma)
-            .map(function(image){return image.clip(Union_Chooma)})
+            .filterBounds(dissolved)
+            .map(function(image){return image.clip(dissolved)})
             .filter(ee.Filter.calendarRange(1,12,'month'))
             .filter(ee.Filter.calendarRange(2020,2020,'year'))
             .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
@@ -151,9 +149,9 @@ var s2_col_20 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .map(renameBands)
             .map(calcNDVI)
             .map(calcNDWI)
-            .map(calcNDII)
-            .map(calcMSI)
-            .map(calcEVI);
+            //.map(calcNDII)
+            //.map(calcMSI)
+            //.map(calcEVI);
 print('S2 collection 20:', s2_col_20);
 print('available S2 images 20:', s2_col_20.size());
 
@@ -179,8 +177,8 @@ print(s2median20, 's2median20')
 ///// for 2023 /////////
 
 var s2_col_23 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-            .filterBounds(Union_Chooma)
-            .map(function(image){return image.clip(Union_Chooma)})
+            .filterBounds(dissolved)
+            .map(function(image){return image.clip(dissolved)})
             .filter(ee.Filter.calendarRange(1,12,'month'))
             .filter(ee.Filter.calendarRange(2023,2023,'year'))
             .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
@@ -189,9 +187,9 @@ var s2_col_23 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .map(renameBands)
             .map(calcNDVI)
             .map(calcNDWI)
-            .map(calcNDII)
-            .map(calcMSI)
-            .map(calcEVI);
+            //.map(calcNDII)
+            //.map(calcMSI)
+            //.map(calcEVI);
 print('S2 collection 2023:', s2_col_23);
 print('available S2 images 2023:', s2_col_23.size());
 
@@ -388,40 +386,3 @@ var legend = ui.Panel({
     position: 'bottom-left', 
     padding: '18px 25px'}
 });
-
-
-
-
-/*
-////////////////////////////////////////////////////////////
-/////////////Agricultural mapping /////////////////////////
-////////////////////////////////////////////////////////////
-
-var s2_20_agri = s2_col_20.select('NDVI');
-
-var maxNDVI = s2_20_agri.select('NDVI').max();
-var minNDVI = s2_20_agri.select('NDVI').min();
-var stdvNDVI = s2_20_agri.select('NDVI').reduce(ee.Reducer.stdDev());
-
-// Function to calculate the largest NDVI drop
-var ndviDifference = s2_20_agri.select('NDVI').map(function(image) {
-  var diff = image.subtract(image).rename('NDVI_Drop');
-  return diff;
-}).max();
-
-var parameters = maxNDVI.addBands(minNDVI)
-                        .addBands(stdvNDVI)
-                        .addBands(ndviDifference);
-
-print(parameters);
-
-
-
-var classifier = ee.Classifier.smileRandomForest(50).train(trainingData, 'class', parameters.bandNames());
-
-// Classify the image
-var classified = parameters.classify(classifier);
-
-Map.addLayer(classified, {}, 'Classified Image');
-
-*/
