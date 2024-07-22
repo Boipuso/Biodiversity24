@@ -1,50 +1,19 @@
-// implemented temporal stdv of indices?! or prob better: max values, start of season
-// linear model glm --> to select most promising bands?! 
-// stepaic 
-//sam model may be in gee!!
-// just transfer the classification to the regions without training data 
-//validate the transfer 
-
-/*
-classic rf classification may be to undercomplex because the classes are so similar, instead temporal or spatial variability of 
-(stdv. or even better start of season, maximum values of ..) indices or bands 
-- maybe even only from a selected class, which we mask and then do the spatial or temporal analysis
-- maybe collect 50 polygons to validate but not hundreds, too much! 
-- perhaps include Sentinel 1 
-- pay attention to the vegetation period - also composite not from the beginning to the end of the year, but 
-perhaps from the middle of 2019 - 2020 
-*/
-
-// Load your uploaded asset as an EE object
-//var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
-var Union_Chooma = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma");
-var Union_Chooma_Nyawa = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Union_Chooma_Nyawa");
+// load study area and training samples
 var dissolved = ee.FeatureCollection("users/Henning/Biodiversity/sichifulo_zam_Dissolve_Chooma_Nyawa");
 var sample_sichifulo_23 = ee.FeatureCollection("users/Henning/Biodiversity/sample23corrected");
 var sample_sichifulo_20 = ee.FeatureCollection("users/Henning/Biodiversity/sample20corrected");
 
-// Print the asset to the console to inspect its properties
-//print('Union_Chooma_Nyawa:', Union_Chooma_Nyawa);
-print('Union_Chooma:', Union_Chooma);
-//print('Dissolve_Chooma_Nyawa:', Dissolve_Chooma_Nyawa);
+// Print the training samples to the console to inspect the properties
 print('sample_sichifulo_23:', sample_sichifulo_23);
 print('sample_sichifulo_20:', sample_sichifulo_20);
 
-// Add the asset to the map with visualization parameters
-//Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa');
-Map.addLayer(Union_Chooma, {color: 'red'}, 'Union_Chooma', 0, 1);
-Map.addLayer(Union_Chooma_Nyawa, {color: 'blue'}, 'Union_Chooma_Nyawa', 0, 1);
+//visualize study area and training samples
 Map.addLayer(dissolved, {color: 'green'}, 'dissolved');
-//Map.addLayer(Dissolve_Chooma_Nyawa, {color: 'green'}, 'Dissolve_Chooma_Nyawa');
 Map.addLayer(sample_sichifulo_23, {color: 'yellow'}, 'sample_sichifulo_23');
 Map.addLayer(sample_sichifulo_20, {color: 'orange'}, 'sample_sichifulo_20');
 
-// Center the map on the asset
-Map.centerObject(Union_Chooma, 10);
-
-
-
-
+// Center the map on the study area
+Map.centerObject(dissolved, 11);
 
 
 ////////////////////////////////////////////////////////
@@ -73,11 +42,7 @@ function maskS2clouds(image) {
 // NDWI = (GREEN-NIR) / (GREEN+NIR)
 // NDII = (NIR – SWIR1) / (NIR + SWIR1)
 // MSI = SWIR1 / NIR
-// Radar backscatter coefficiant (HH/VV)
-// Spectral reflectance (SWIR1, SWIR2, NIR)
-// EVI 
-
-// Needed bands: blue, green, red, nir, swir1, swir2, 
+// EVI
 
 function calcNDVI(img){
   return img.addBands(img.normalizedDifference(['NIR','R']).rename('NDVI').float());
@@ -149,19 +114,18 @@ var s2_col_20 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .map(renameBands)
             .map(calcNDVI)
             .map(calcNDWI)
-            //.map(calcNDII)
+           // .map(calcNDII)
             //.map(calcMSI)
-            //.map(calcEVI);
+           // .map(calcEVI);
 print('S2 collection 20:', s2_col_20);
 print('available S2 images 20:', s2_col_20.size());
-
 
 // calculate the median composite
   var startDate = ee.Date.fromYMD(2020, 1, 1);
   var s2median20 = s2_col_20.median()
                 .set('year', 2020)    
                 .set('system:time_start', startDate.millis());
-                
+
 // Visualization parameters
 var visParams = {
   bands: ['R', 'G', 'B'],
@@ -189,7 +153,7 @@ var s2_col_23 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .map(calcNDWI)
             //.map(calcNDII)
             //.map(calcMSI)
-            //.map(calcEVI);
+           // .map(calcEVI);
 print('S2 collection 2023:', s2_col_23);
 print('available S2 images 2023:', s2_col_23.size());
 
@@ -201,6 +165,7 @@ print('available S2 images 2023:', s2_col_23.size());
                 .set('system:time_start', startDate.millis());
 
 Map.addLayer(s2median23, visParams, 's2median23', 0, 1);
+print(s2median23, 's2median23')
 print(s2median23.bandNames());
 
 ///////////////////////////////////////
@@ -213,7 +178,7 @@ print(s2median23.bandNames());
 var sample20 = s2median20.sampleRegions({
   collection: sample_sichifulo_20, 
   properties: ['LC_Nr'], 
-  scale: 90,
+  scale: 90, // has to be downscaled for computation time reasons
   geometries: true // coordinates maintained
 });
 
@@ -243,14 +208,12 @@ var sample23 = s2median23.sampleRegions({
 var sample23 = sample23.randomColumn("random",123);
 
 // Every feature with a value of less than 0.66 (2/3) is collected as a training feature,
-// The rest is collected as validation features (1/3)
-var split = 0.66;
+// The rest is collected as validation features (1/3)var split = 0.66;
 var training23 = sample23.filter(ee.Filter.lt("random",split));
 var validation23 = sample23.filter(ee.Filter.gte("random",split));
 
 //print('training features 2023:', training23);
 //print('samples 2023:', sample23);
-
 
 
 //////////////////////////////////////
@@ -309,12 +272,11 @@ for (var i = 0; i < imgset.length; i++) {
   var result = RFclassification(set.train, set.img, set.area, set.val, set.name);
   
   // Palette with the colors
-  var palette =['#1565C0', '#009608', '#8bc34a', '#ffc107', '#ff9800', '#f44336', '#ad1457', "#A4DBE8"];
-  
+var palette =['#0080FF', '#E5AA70', '#696969', '#FFCC33', '#7FFF00', '#808000', 'darkgreen', "#87CEEB"];  
   // Define visualization parameters
 var visParams = {
-  min: 0,
-  max: 7,  // Assuming you have 7 classes (0 to 6)
+  min: 1,
+  max: 8,  // Assuming you have 7 classes (0 to 6)
   palette: palette
 };
 
@@ -326,10 +288,11 @@ var visParams = {
   print('Validation overall accuracy for ' + result.name + ': ', result.testAccuracy.accuracy());
 }
   
+  
 ///////////////////////////////////////////////////////////////
 ///////////// Adding a legend to the classified image /////////
-///////////////////////////////////////////////////////////////
-
+///////////////////////////////////////////////////////////////  
+  
 // The code is copied and only slightly adjusted (change of classes and their colors) from the "classification lecture" slides
 
 var legend = ui.Panel({ 
@@ -372,7 +335,7 @@ var makeRow = function(color, name) {
     });
 };
 // Palette with the colors
-var palette =['#1565C0', '#009608', '#8bc34a', '#ffc107', '#ff9800', '#f44336', '#ad1457', "#A4DBE8"];
+var palette =['#0080FF', '#E5AA70', '#696969', '#FFCC33', '#7FFF00', '#808000', 'darkgreen', "#87CEEB"];
 // Name of the legend
 var names = ['Water', 'Bare', 'Built', 'Cropland', 'Grass', 'Shrub', 'Forest', 'Wetland'];
 // Add color and and names
@@ -385,4 +348,109 @@ var legend = ui.Panel({
   style: { 
     position: 'bottom-left', 
     padding: '18px 25px'}
+});
+
+
+/////////////////////////////////////////////////////////////////////////////
+/////////calculate the respective area of the classes in sqkm ///////////////
+/////////////////////////////////////////////////////////////////////////////
+
+// Iterate over band sets
+for (var i = 0; i < imgset.length; i++) {
+  
+  var set = imgset[i];
+  
+  // the classification has to be conducted again in this function to retrieve results
+  var result = RFclassification(set.train, set.img, set.area, set.val, set.name);
+
+// Define a scale for the calculation (30 meters)
+var scale = 90;
+
+// Define a dictionary of class names and their corresponding values in the classified image
+var classNames = {
+  'Water': 1,
+  'Bare': 2,
+  'Built': 3,
+  'Cropland': 4,
+  'Grass': 5,
+  'Shrub': 6,
+  'Forest': 7,
+  'Wetland': 8
+};
+
+// Create an empty list to store the area per class
+var areaList = [];
+
+// Iterate over the class names
+for (var Name in classNames) {
+  // Filter the classified image for the current class
+  var classImage = result.classification.eq(classNames[Name]);
+  
+  // Compute the area for the current class
+  var area = classImage.multiply(ee.Image.pixelArea()).rename('area');
+  
+  // Reduce the region to compute the total area in square meters
+  var classArea = area.reduceRegion({
+    reducer: ee.Reducer.sum(),
+    geometry: dissolved,
+    scale: scale,
+    maxPixels: 1e13 
+  });
+  
+  // Get the total area in square kilometers
+  var areaSqkm = ee.Number(classArea.get('area')).divide(1e6); 
+  
+  // Add the class name and area value to the list
+  areaList.push([Name, areaSqkm]);
+}
+
+// Print the area per class for the classifications with different sets of bands
+print('Area per class for ' + result.name + ' in sqkm: ', areaList);
+
+}
+
+
+
+////////////////////////////////////////////////////////////////7
+///////// change detection ////////////////////////////////////////
+///////////////////////////////////////////////////////////////
+
+// Step 3: Define the land cover class of interest (e.g., Forest class = 1)
+var landCoverClass = 4;
+
+
+// Iterate over band sets
+
+  var set20 = imgset[0];
+  var set23 = imgset[1];
+  
+  // the classification has to be conducted again in this function to retrieve results
+  var result20 = RFclassification(set20.train, set20.img, set20.area, set20.val, set20.name);
+  var result23 = RFclassification(set23.train, set23.img, set23.area, set23.val, set23.name);
+
+
+// Step 4: Extract the specific land cover class
+var classYear1 = result20.classification.eq(landCoverClass);
+var classYear2 = result23.classification.eq(landCoverClass);
+
+// Step 5: Compute the change detection map
+var changeDetection = classYear2.subtract(classYear1);
+
+// Step 6: Define visualization parameters
+var visParams = {
+  min: -1,
+  max: 1,
+  palette: ['red', 'white', 'green']
+};
+
+// Step 7: Visualize the results
+Map.addLayer(changeDetection, visParams, 'Change Detection');
+
+// Optional: Export the change detection map
+Export.image.toDrive({
+  image: changeDetection,
+  description: 'ChangeDetection',
+  scale: 90,
+  region: dissolved,
+  maxPixels: 1e13
 });
