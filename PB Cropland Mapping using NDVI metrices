@@ -70,8 +70,7 @@ function renameBands(image) {
 var s2_col_20 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .filterBounds(dissolved)
             .map(function(image){return image.clip(dissolved)})
-            .filter(ee.Filter.calendarRange(1,12,'month'))
-            .filter(ee.Filter.calendarRange(2020,2020,'year'))
+            .filterDate('2020-01-01', '2020-12-31')
             .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
             .map(maskS2clouds)
             .map(applyScaleFactors)
@@ -102,8 +101,7 @@ print(s2median20, 's2median20')
 var s2_col_23 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .filterBounds(dissolved)
             .map(function(image){return image.clip(dissolved)})
-            .filter(ee.Filter.calendarRange(1,12,'month'))
-            .filter(ee.Filter.calendarRange(2023,2023,'year'))
+            .filterDate('2023-01-01', '2023-12-31')
             .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
             .map(maskS2clouds)
             .map(applyScaleFactors)
@@ -296,8 +294,6 @@ var visParams = {
 ///////////// Adding a legend to the classified image /////////
 ///////////////////////////////////////////////////////////////
 
-// The code is copied and only slightly adjusted (change of classes and their colors) from the "classification lecture" slides
-
 var legend = ui.Panel({ 
   style: { 
     position: 'bottom-left', 
@@ -443,11 +439,4 @@ var visParams = {
 // Step 7: Visualize the results
 Map.addLayer(changeDetection, visParams, 'Change Detection');
 
-// Optional: Export the change detection map
-Export.image.toDrive({
-  image: changeDetection,
-  description: 'ChangeDetection',
-  scale: 90,
-  region: dissolved,
-  maxPixels: 1e13
-});
+
